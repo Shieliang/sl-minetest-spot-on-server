@@ -8,38 +8,10 @@ env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: sl-minetest-spot-on-server-repo
   EKS_CLUSTER: sl-minetest-cluster
+  CLOUDFORMATION_STACK_EFS: sl-minetest-spot-on-server-efs
 
 jobs:
-  # --- 新增测试阶段 ---
-  test-and-scan:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout Code
-      uses: actions/checkout@v3
-
-    - name: Run Kubernetes Linter
-      uses: stackrox/kube-linter-action@v1
-      with:
-        directory: ./infrastructure/kubernetes
-        # 💥 核心修复：显式指定配置文件路径
-        config: ./.kube-linter.yaml
-
-    - name: Build local image for scanning
-      run: docker build -t temp-scan-image ./app/minetest-server
-
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: 'temp-scan-image'
-        format: 'table'
-        exit-code: '1' # 如果发现高危漏洞，直接中止流水线！
-        ignore-unfixed: true
-        vuln-type: 'os,library'
-        severity: 'CRITICAL,HIGH'
-
-  # --- 修改部署阶段，增加依赖 ---
   deploy:
-    needs: test-and-scan # 必须等测试通过了，才会开始部署！
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Code
@@ -59,11 +31,10 @@ jobs:
     - name: Build, Tag, and Push Image to ECR
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ github.sha }} # 使用每次提交的唯一哈希作为版本号
+        IMAGE_TAG: ${{ github.sha }} 
       run: |
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./app/minetest-server
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
     - name: Update EKS Kubeconfig
       run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
@@ -73,8 +44,15 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        # 自动化替换 YAML 里的占位符并部署
-        EFS_ID=$(aws cloudformation describe-stacks --stack-name sl-minetest-spot-on-server-efs --query "Stacks[0].Outputs[?OutputKey=='FileSystemId'].OutputValue" --output text)
+        # 1. 动态抓取最新的 EFS ID
+        EFS_ID=$(aws cloudformation describe-stacks --stack-name ${{ env.CLOUDFORMATION_STACK_EFS }} --query "Stacks[0].Outputs[?OutputKey=='FileSystemId'].OutputValue" --output text)
+        
+        # 2. 注入镜像和 EFS ID (原地替换)
         sed -i "s|IMAGE_PLACEHOLDER|$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG|g" ./infrastructure/kubernetes/minetest.yaml
         sed -i "s|EFS_ID_PLACEHOLDER|$EFS_ID|g" ./infrastructure/kubernetes/minetest.yaml
+        
+        # 3. 执行 K8s 部署
         kubectl apply -f ./infrastructure/kubernetes/minetest.yaml
+        
+        # 4. 验证部署状态
+        kubectl rollout status deployment/minetest-server

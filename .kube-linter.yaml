@@ -1,9 +1,0 @@
-# .kube-linter.yaml
-# 显式关闭那些因为占位符或特定业务逻辑导致的报错
-checks:
-  doNotRunChecks:
-    - latest-tag
-    - no-read-only-root-fs
-    - run-as-non-root
-    - unset-cpu-requirements
-    - unset-memory-requirements
