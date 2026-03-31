@@ -2,7 +2,7 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ] # 只要 main 分支有变动，立刻触发
+    branches: [ "main" ]
 
 env:
   AWS_REGION: us-east-1
@@ -10,7 +10,34 @@ env:
   EKS_CLUSTER: sl-minetest-cluster
 
 jobs:
+  # --- 新增测试阶段 ---
+  test-and-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Run Kubernetes Linter
+      uses: stackrox/kube-linter-action@v1
+      with:
+        directory: ./infrastructure/kubernetes
+
+    - name: Build local image for scanning
+      run: docker build -t temp-scan-image ./app/minetest-server
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'temp-scan-image'
+        format: 'table'
+        exit-code: '1' # 如果发现高危漏洞，直接中止流水线！
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
+
+  # --- 修改部署阶段，增加依赖 ---
   deploy:
+    needs: test-and-scan # 必须等测试通过了，才会开始部署！
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Code
