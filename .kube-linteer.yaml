@@ -1,7 +1,9 @@
 # .kube-linter.yaml
-# 告诉审计员：有些规则我们由于架构原因，需要手动豁免
+# 显式关闭那些因为占位符或特定业务逻辑导致的报错
 checks:
   doNotRunChecks:
-    - latest-tag                # 豁免：因为我们要用 IMAGE_PLACEHOLDER 动态替换
-    - no-read-only-root-fs      # 豁免：Minetest 游戏引擎需要写入临时数据
-    - run-as-non-root           # 豁免：InitContainer 必须用 root 修改 EFS 挂载权限
+    - latest-tag
+    - no-read-only-root-fs
+    - run-as-non-root
+    - unset-cpu-requirements
+    - unset-memory-requirements

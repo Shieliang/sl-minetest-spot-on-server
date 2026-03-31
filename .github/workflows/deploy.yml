@@ -21,6 +21,8 @@ jobs:
       uses: stackrox/kube-linter-action@v1
       with:
         directory: ./infrastructure/kubernetes
+        # 💥 核心修复：显式指定配置文件路径
+        config: ./.kube-linter.yaml
 
     - name: Build local image for scanning
       run: docker build -t temp-scan-image ./app/minetest-server
