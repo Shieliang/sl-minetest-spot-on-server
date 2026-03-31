@@ -1,0 +1,47 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Production-ready ECR Repository for SL-Minetest-Spot-on-Server.'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: sl-minetest-prod
+  RepositoryName:
+    Type: String
+    Default: sl-minetest-spot-on-server-repo
+
+Resources:
+  MinetestRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      # 1. DevSecOps 亮点：开启推送时自动扫描 (ScanOnPush)
+      # 任何带高危漏洞的镜像一旦推送到这里，AWS 会立刻拉响警报
+      ImageScanningConfiguration:
+        ScanOnPush: true 
+      # 2. FinOps 亮点：生命周期策略 (Lifecycle Policy)
+      # 自动清理旧镜像，只保留最近的 10 个，防止 ECR 存储费用随时间爆炸
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep only the last 10 images to save storage costs",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+
+Outputs:
+  RepositoryUri:
+    Description: The URI of the ECR repository
+    Value: !GetAtt MinetestRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-EcrUri

@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Production-ready EKS Cluster for SL-Minetest-Spot-on-Server using Spot Instances for FinOps.'
+
+Parameters:
+  EnvironmentName:
+    Description: Must match the EnvironmentName used in the VPC stack
+    Type: String
+    Default: sl-minetest-prod
+  ClusterName:
+    Type: String
+    Default: sl-minetest-cluster
+  KubernetesVersion:
+    Type: String
+    Default: "1.30" # 建议使用较新的稳定版本
+  NodeInstanceType:
+    Type: String
+    Default: "t3.medium" # t3.medium 对于跑轻量级游戏服务器足够了
+
+Resources:
+  # =====================================================================
+  # 1. IAM Role for EKS Control Plane (控制平面的权限)
+  # =====================================================================
+  EksClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+
+  # =====================================================================
+  # 2. 核心 EKS 集群 (Control Plane)
+  # =====================================================================
+  EksCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Ref ClusterName
+      Version: !Ref KubernetesVersion
+      RoleArn: !GetAtt EksClusterRole.Arn
+      ResourcesVpcConfig:
+        SubnetIds:
+          Fn::Split:
+            - ','
+            - Fn::Join:
+                - ','
+                - - Fn::ImportValue: !Sub "${EnvironmentName}-PublicSubnets"
+                  - Fn::ImportValue: !Sub "${EnvironmentName}-PrivateSubnets"
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: true
+
+  # =====================================================================
+  # 3. IAM Role for EKS Worker Nodes (工作节点的权限 - 最小权限原则)
+  # =====================================================================
+  EksNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly # 允许节点从 ECR 拉取镜像
+
+  # =====================================================================
+  # 4. Managed Node Group (受管节点组) - FinOps 核心所在！
+  # =====================================================================
+  EksNodeGroup:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: !Ref EksCluster
+      NodeRole: !GetAtt EksNodeRole.Arn
+      # 安全第一：工作节点只部署在私有子网中！
+      Subnets:
+        Fn::Split:
+          - ','
+          - Fn::ImportValue: !Sub "${EnvironmentName}-PrivateSubnets"
+      ScalingConfig:
+        MinSize: 1
+        DesiredSize: 1
+        MaxSize: 3 # 允许在游戏需求增加时自动扩容
+      InstanceTypes: 
+        - !Ref NodeInstanceType
+      CapacityType: SPOT # 核心竞争力：强制使用竞价实例，节省最高 90% 成本！
+      AmiType: AL2_x86_64
+      Tags:
+        Project: SL-Minetest-Spot
+
+Outputs:
+  ClusterNameOutput:
+    Value: !Ref EksCluster
+    Export:
+      Name: !Sub ${EnvironmentName}-ClusterName

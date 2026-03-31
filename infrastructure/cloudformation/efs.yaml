@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Amazon EFS for Minetest Stateful Storage (Data Persistence)'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: sl-minetest-spot-on-server
+
+Resources:
+  # =====================================================================
+  # 1. 创建 EFS 文件系统主机 (云端无限 U 盘)
+  # =====================================================================
+  MinetestEFS:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true # DevSecOps: 静态数据加密，保护玩家数据
+      PerformanceMode: generalPurpose
+      LifecyclePolicies:
+        # FinOps 杀手锏: 30天没访问的旧世界存档，自动降级到低频存储 (IA)，费用直降 90%！
+        - TransitionToIA: AFTER_30_DAYS 
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-efs
+
+  # =====================================================================
+  # 2. 安全组 (防火墙)：只允许 EKS 节点通过 NFS 协议 (2049端口) 访问它
+  # =====================================================================
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow NFS traffic from EKS nodes
+      VpcId: 
+        Fn::ImportValue: !Sub "${EnvironmentName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          # 💥 核心修改：直接写死网段，不再向 VPC 索要它没导出的 VpcCidr
+          CidrIp: 10.0.0.0/16
+
+  # =====================================================================
+  # 3. 挂载目标 (Mount Targets)：让两个私有子网里的节点都能插上这个 U 盘
+  # =====================================================================
+  MountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MinetestEFS
+      SubnetId:
+        Fn::Select:
+          - 0
+          - Fn::Split: [',', Fn::ImportValue: !Sub "${EnvironmentName}-PrivateSubnets"]
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  MountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MinetestEFS
+      SubnetId:
+        Fn::Select:
+          - 1
+          - Fn::Split: [',', Fn::ImportValue: !Sub "${EnvironmentName}-PrivateSubnets"]
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+Outputs:
+  FileSystemId:
+    Description: The ID of the EFS File System
+    Value: !Ref MinetestEFS
+    Export:
+      Name: !Sub "${EnvironmentName}-EfsId"
