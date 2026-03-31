@@ -38,7 +38,7 @@ spec:
       storage: 10Gi
 
 ---
-# 4. Deployment：游戏服务端 (已获得 Linter 豁免权)
+# 4. Deployment：游戏服务端
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -54,19 +54,14 @@ spec:
         app: minetest
     spec:
       securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
         fsGroup: 1000
       
       initContainers:
       - name: fix-efs-permissions
         image: busybox:1.36
         command: ['sh', '-c', 'chmod 777 /home/minetestuser/.minetest/worlds']
-        # Kube-linter 豁免：必须使用 root 来修改网络卷权限
-        # nolint: run-as-non-root, no-read-only-root-fs
         securityContext:
-          runAsUser: 0
-          readOnlyRootFilesystem: false 
+          runAsUser: 0  # 必须用 root 才有权 chmod
         volumeMounts:
         - name: minetest-storage
           mountPath: /home/minetestuser/.minetest/worlds
@@ -80,14 +75,7 @@ spec:
 
       containers:
       - name: minetest
-        # Kube-linter 豁免：IMAGE_PLACEHOLDER 会在运行时被 CI 替换
-        # nolint: latest-tag
         image: IMAGE_PLACEHOLDER
-        # Kube-linter 豁免：Minetest 引擎需要写入日志和缓存
-        # nolint: no-read-only-root-fs
-        securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: false
         ports:
         - containerPort: 30000
           protocol: UDP
