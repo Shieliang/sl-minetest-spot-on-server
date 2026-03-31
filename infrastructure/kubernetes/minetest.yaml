@@ -38,7 +38,7 @@ spec:
       storage: 10Gi
 
 ---
-# 4. Deployment：游戏服务端
+# 4. Deployment：游戏服务端 (防弹增强版)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -53,20 +53,37 @@ spec:
       labels:
         app: minetest
     spec:
-      # ==========================================================
-      # 🚀 核心修复：特种兵先遣队 (修改 EFS 权限)
-      # ==========================================================
+      securityContext:
+        # 强制要求 Pod 以非 root 用户运行
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      
       initContainers:
       - name: fix-efs-permissions
-        image: busybox
+        image: busybox:1.36 # 修复点：指定具体版本号
         command: ['sh', '-c', 'chmod 777 /home/minetestuser/.minetest/worlds']
+        securityContext:
+          runAsNonRoot: false # 明确允许这个初始化容器用 root，因为要改权限
+          runAsUser: 0
+          readOnlyRootFilesystem: false
         volumeMounts:
         - name: minetest-storage
           mountPath: /home/minetestuser/.minetest/worlds
-      # ==========================================================
+        resources: # 修复点：给初始化容器也加上资源限制
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "100m"
+            memory: "128Mi"
+
       containers:
       - name: minetest
-        image: IMAGE_PLACEHOLDER # 由 Makefile 自动替换
+        image: IMAGE_PLACEHOLDER
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false # 游戏需要写入日志和临时文件，暂时不设为只读
         ports:
         - containerPort: 30000
           protocol: UDP
@@ -80,11 +97,11 @@ spec:
           limits:
             cpu: "500m"
             memory: "1Gi"
+      
       volumes:
       - name: minetest-storage
         persistentVolumeClaim:
           claimName: minetest-pvc
-
 ---
 # 5. Service：暴露公网 IP
 apiVersion: v1
