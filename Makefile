@@ -121,7 +121,7 @@ deploy-k8s: ## 部署游戏服务端到 EKS 集群 (带持久化存储)
 	@echo "Injecting EFS ID: $(EFS_ID) and Image URI: $(ECR_URI):$(IMAGE_TAG)"
 	@sed -e 's|IMAGE_PLACEHOLDER|$(ECR_URI):$(IMAGE_TAG)|g' -e 's|EFS_ID_PLACEHOLDER|$(EFS_ID)|g' ./infrastructure/kubernetes/minetest.yaml | kubectl apply -f -
 	@echo "Deployment applied! Waiting for AWS LoadBalancer..."
-	
+
 get-ip: ## 获取游戏服务器的公网连接地址
 	@echo "Fetching Game Server IP..."
 	@kubectl get svc minetest-service -o wide
@@ -148,17 +148,36 @@ deploy-efs: ## 部署 EFS 弹性文件系统 (数据持久化)
 		--parameter-overrides EnvironmentName=sl-minetest-prod
 	@echo "EFS deployment complete!"
 
+destroy-efs: ## 销毁 EFS 资源
+	@echo "Destroying EFS stack..."
+	aws cloudformation delete-stack \
+		--stack-name $(CLOUDFORMATION_STACK_EFS) \
+		--region $(AWS_REGION)
+	aws cloudformation wait stack-delete-complete \
+		--stack-name $(CLOUDFORMATION_STACK_EFS) \
+		--region $(AWS_REGION)
+	@echo "EFS successfully destroyed."
+
 # =====================================================================
 # 🏗️ ZONE 7: 一键部署/摧毁所有资源
 # =====================================================================
-deploy-all: deploy-vpc deploy-eks deploy-efs install-csi-driver deploy-k8s ## 一键部署全部环境 (网络 -> 计算 -> 存储 -> 驱动 -> 游戏)
+
+# 部署顺序：网络 -> 仓库 -> 镜像 -> 存储 -> 集群 -> 驱动 -> 游戏
+deploy-all: deploy-vpc deploy-ecr push-image deploy-efs deploy-eks install-csi-driver deploy-k8s ## 一键部署全部环境
 	@echo "======================================================="
-	@echo "🚀 All cloud resources (VPC -> EKS -> K8s) have been successfully deployed!"
-	@echo "Run 'make get-ip' in a few minutes to get your game server address."
+	@echo "🚀 [SUCCESS] 整个云端生产环境已全自动化部署完毕！"
+	@echo "注意：由于 NLB 注册需要时间，请等待约 3-5 分钟后运行 'make get-ip'。"
 	@echo "======================================================="
 
-destroy-all: destroy-k8s destroy-eks destroy-vpc ## 一键销毁所有云端计费资源 (严格按顺序执行)
+# 销毁顺序：游戏(释放NLB) -> 集群 -> 存储 -> 网络 (仓库通常保留以节省重复上传时间)
+# 警告：必须先销毁 K8s 以确保负载均衡器(NLB)被删除，否则 VPC 将无法删除
+destroy-all: destroy-k8s
+	@echo "Waiting for Load Balancer to release (30s)..."
+	@sleep 30
+	$(MAKE) destroy-eks
+	$(MAKE) destroy-efs
+	$(MAKE) destroy-vpc
 	@echo "======================================================="
-	@echo "🎉 All cloud resources (K8s -> EKS -> VPC) have been successfully destroyed!"
-	@echo "Your AWS bill is now completely safe. FinOps champion!"
+	@echo "🗑️ [CLEANED] 所有计费资源已安全销毁！"
+	@echo "提示：ECR 仓库已保留。若需完全抹除，请手动运行 'aws cloudformation delete-stack --stack-name $(CLOUDFORMATION_STACK_ECR)'"
 	@echo "======================================================="
