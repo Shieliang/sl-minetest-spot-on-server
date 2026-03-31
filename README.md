@@ -11,7 +11,13 @@
 
 ## 🏗️ 系统架构图 (Architecture)
 
-[在这里插入你的架构图：显示外网 -> NLB -> EKS Private Subnets -> EFS 的流量走向]
+**流量走向**: 外网 → NLB → EKS Private Subnets → EFS
+
+![Infrastructure & Traffic Flow](asset/Infrastructure&Traffic_Flow.jpg)
+
+## 🔄 CI/CD Pipeline
+
+![CI/CD Pipeline](asset/CI_CD%20Pipeline.jpg)
 
 ## 🛠️ 技术栈 (Tech Stack)
 
