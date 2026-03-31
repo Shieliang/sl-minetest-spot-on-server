@@ -1,0 +1,51 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ] # 只要 main 分支有变动，立刻触发
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: sl-minetest-spot-on-server-repo
+  EKS_CLUSTER: sl-minetest-cluster
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Build, Tag, and Push Image to ECR
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }} # 使用每次提交的唯一哈希作为版本号
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./app/minetest-server
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+    - name: Update EKS Kubeconfig
+      run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+    - name: Deploy to EKS
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        # 自动化替换 YAML 里的占位符并部署
+        EFS_ID=$(aws cloudformation describe-stacks --stack-name sl-minetest-spot-on-server-efs --query "Stacks[0].Outputs[?OutputKey=='FileSystemId'].OutputValue" --output text)
+        sed -i "s|IMAGE_PLACEHOLDER|$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG|g" ./infrastructure/kubernetes/minetest.yaml
+        sed -i "s|EFS_ID_PLACEHOLDER|$EFS_ID|g" ./infrastructure/kubernetes/minetest.yaml
+        kubectl apply -f ./infrastructure/kubernetes/minetest.yaml
